@@ -20,7 +20,6 @@ void* udp_listener_thread(void* arg);
 void* keep_alive_thread(void* arg);
 
 int main() {
- int main() {
     char buffer[1024];
     pthread_t udp_thread, keepalive_thread;
 
