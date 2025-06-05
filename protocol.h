@@ -17,6 +17,14 @@
 
 #define TRV_MAX_PAYLOAD   512
 
+
+typedef struct {
+    char question[256];
+    char options[4][128];
+    int correct_index;
+} TriviaQuestion;
+
+
 // מבנה הודעה בפרוטוקול הטריוויה
 typedef struct {
     uint8_t type;              // סוג ההודעה (TRV_*)
