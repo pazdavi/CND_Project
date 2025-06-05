@@ -20,8 +20,19 @@ void* udp_listener_thread(void* arg);
 void* keep_alive_thread(void* arg);
 
 int main() {
+ int main() {
     char buffer[1024];
     pthread_t udp_thread, keepalive_thread;
+
+    // Ask user before connecting
+    char choice[8];
+    printf("Do you want to join the game? (y/n): ");
+    fgets(choice, sizeof(choice), stdin);
+
+    if (choice[0] != 'y' && choice[0] != 'Y') {
+        printf("Canceled. Exiting.\n");
+        return 0;
+    }
 
     // Create TCP connection to server
     tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
