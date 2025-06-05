@@ -98,20 +98,38 @@ void* udp_listener_thread(void* arg) {
     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     setsockopt(udp_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
-    while (1) {
-        memset(buffer, 0, sizeof(buffer));
-        recvfrom(udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
+   while (1) {
+    memset(buffer, 0, sizeof(buffer));
+    recvfrom(udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
 
-        printf("\n📨 Question received:\n%s\n", buffer);
+    printf("\n📨 Question received:\n%s\n", buffer);
 
-        // Send ACK to server via TCP
-        send(tcp_sock, "ACK\n", 4, 0);
+    // Send ACK to server via TCP
+    send(tcp_sock, "ACK\n", 4, 0);
 
-        // Prompt user for answer
-        printf("Your answer (A/B/C/D): ");
+    printf("Your answer (A/B/C/D), 30 sec timeout: ");
+    fflush(stdout);
+
+    // Set up select() on stdin with 30 sec timeout
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+    struct timeval timeout;
+    timeout.tv_sec = 30;
+    timeout.tv_usec = 0;
+
+    int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
+    if (ret > 0) {
         fgets(buffer, sizeof(buffer), stdin);
         send(tcp_sock, buffer, strlen(buffer), 0);
+    } else if (ret == 0) {
+        printf("\n⏰ Time expired. No answer sent.\n");
+        send(tcp_sock, "NOANSWER\n", 9, 0);  // optional
+    } else {
+        perror("select failed");
     }
+}
+
 
     return NULL;
 }
