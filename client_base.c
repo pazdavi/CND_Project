@@ -5,7 +5,9 @@
 #include <pthread.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <time.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/select.h>
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 8888
