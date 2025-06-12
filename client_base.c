@@ -129,18 +129,19 @@ void* udp_listener_thread(void* arg) {
     struct timeval timeout;
     timeout.tv_sec = 30;
     timeout.tv_usec = 0;
-
+    
+    TrvMessage answer;
   int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
         if (ret > 0) {
             char buffer[1024];
             fgets(buffer, sizeof(buffer), stdin);
             buffer[strcspn(buffer, "\n")] = '\0';
-            build_message(&msg, TRV_ANSWER, msg.question_id, buffer);
-            send(tcp_sock, &msg, 4 + msg.payload_len, 0);
+            build_message(&answer, TRV_ANSWER, answer.question_id, buffer);
+            send(tcp_sock, &answer, 4 + msg.payload_len, 0);
         } else if (ret == 0) {
             printf("\n⏰ Time expired. No answer sent.\n");
-            build_message(&msg, TRV_ANSWER, msg.question_id, "0");
-            send(tcp_sock, &msg, 4 + msg.payload_len, 0);
+            build_message(&answer, TRV_ANSWER, answer.question_id, "0");
+            send(tcp_sock, &answer, 4 + msg.payload_len, 0);
         } else {
             perror("select failed");
         }
