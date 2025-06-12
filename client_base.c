@@ -51,7 +51,8 @@ int main() {
     }
 
     // Receive verification code from server
-   recv(tcp_sock, &msg, sizeof(msg), 0);
+    TrvMessage msg;
+    recv(tcp_sock, &msg, sizeof(msg), 0);
     msg.payload[msg.payload_len] = '\0';
     printf("Server: %s\n", msg.payload);
     
