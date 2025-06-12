@@ -108,14 +108,15 @@ void* udp_listener_thread(void* arg) {
 
    while (1) {
     // get question
-    TrvMessage msg;
-    recvfrom(udp_sock, &msg, sizeof(msg), 0, NULL, NULL);
+    TrvMessage question;
+    recvfrom(udp_sock, &question, sizeof(msg), 0, NULL, NULL);
     msg.payload[msg.payload_len] = '\0';
     printf("\n📨 Question received:\n%s\n", msg.payload);
 
     // Send ACK to server via TCP
-    build_message(&msg, TRV_ACK, 0, "");
-    send(tcp_sock, &msg, 4 + msg.payload_len, 0);
+    TrvMessage mACK;
+    build_message(&mACK, TRV_ACK, 0, "");
+    send(tcp_sock, &mACK, 4 + msg.payload_len, 0);
 
     printf("Your answer (1/2/3/4), 30 sec timeout: ");
     fflush(stdout);
@@ -151,11 +152,11 @@ void* udp_listener_thread(void* arg) {
 // Thread that sends TCP keep-alive messages every 10 seconds
 
 void* keep_alive_thread(void* arg) {
-    TrvMessage msg;
+    TrvMessage ka;
     while (1) {
         sleep(10);
-        build_message(&msg, TRV_KEEPALIVE, 0, "");
-        send(tcp_sock, &msg, 4 + msg.payload_len, 0);
+        build_message(&ka, TRV_KEEPALIVE, 0, "");
+        send(tcp_sock, &ka, 4 + msg.payload_len, 0);
     }
     return NULL;
 }
