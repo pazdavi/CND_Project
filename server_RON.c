@@ -122,6 +122,10 @@ void* handle_client(void* arg) {
 
         if (msg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
+
+            printf("Received KEEPALIVE from %s:%d\n",
+            inet_ntoa(client->addr.sin_addr),
+            ntohs(client->addr.sin_port));
         } else if (msg.type == TRV_ANSWER) {
             int qid = msg.question_id;
             int ans = atoi(msg.payload);
