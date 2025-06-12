@@ -109,14 +109,14 @@ void* udp_listener_thread(void* arg) {
    while (1) {
     // get question
     TrvMessage question;
-    recvfrom(udp_sock, &question, sizeof(msg), 0, NULL, NULL);
-    msg.payload[msg.payload_len] = '\0';
-    printf("\n📨 Question received:\n%s\n", msg.payload);
+    recvfrom(udp_sock, &question, sizeof(question), 0, NULL, NULL);
+    question.payload[question.payload_len] = '\0';
+    printf("\n📨 Question received:\n%s\n", question.payload);
 
     // Send ACK to server via TCP
     TrvMessage mACK;
     build_message(&mACK, TRV_ACK, 0, "");
-    send(tcp_sock, &mACK, 4 + msg.payload_len, 0);
+    send(tcp_sock, &mACK, 4 + mACK.payload_len, 0);
 
     printf("Your answer (1/2/3/4), 30 sec timeout: ");
     fflush(stdout);
@@ -156,7 +156,7 @@ void* keep_alive_thread(void* arg) {
     while (1) {
         sleep(10);
         build_message(&ka, TRV_KEEPALIVE, 0, "");
-        send(tcp_sock, &ka, 4 + msg.payload_len, 0);
+        send(tcp_sock, &ka, 4 + ka.payload_len, 0);
     }
     return NULL;
 }
