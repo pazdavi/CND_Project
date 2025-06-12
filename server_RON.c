@@ -169,6 +169,11 @@ void start_game() {
                  questions[i].options[2],
                  questions[i].options[3]);
 
+        struct in_addr localInterface;
+        localInterface.s_addr = inet_addr("192.168.6.1");  // כתובת השרת מול ה־R1
+        setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
+
+        
         build_message(&msg, TRV_QUESTION, i, q_text);
         sendto(sockfd, &msg, 4 + msg.payload_len, 0,
                (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
