@@ -90,45 +90,48 @@ int main() {
 
 void* handle_client(void* arg) {
     Client* client = (Client*)arg;
-    TrvMessage msg;
-
+    TrvMessage msg1;
+    // send code
     client->auth_code = rand() % 9000 + 1000;
     char code_str[32];
     snprintf(code_str, sizeof(code_str), "%d", client->auth_code);
-    build_message(&msg, TRV_AUTH_CODE, 0, code_str);
-    send(client->socket, &msg, 4 + msg.payload_len, 0);
+    build_message(&msg1, TRV_AUTH_CODE, 0, code_str);
+    send(client->socket, &msg1, 4 + msg.payload_len, 0);
 
-    recv(client->socket, &msg, sizeof(msg), 0);
-    msg.payload[msg.payload_len] = '\0';
+    // receive code from client
+    TrvMessage msg2;
+    recv(client->socket, &msg2, sizeof(msg2), 0);
+    msg2.payload[msg2.payload_len] = '\0';
 
-    if (msg.type != TRV_AUTH_REPLY || atoi(msg.payload) != client->auth_code) {
-        build_message(&msg, TRV_AUTH_FAIL, 0, "Invalid code.");
-        send(client->socket, &msg, 4 + msg.payload_len, 0);
+    if (msg2.type != TRV_AUTH_REPLY || atoi(msg2.payload) != client->auth_code) {
+        build_message(&msg1, TRV_AUTH_FAIL, 0, "Invalid code.");
+        send(client->socket, &msg1, 4 + msg1.payload_len, 0);
         close(client->socket);
         pthread_exit(NULL);
     }
 
     client->verified = 1;
-    build_message(&msg, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
-    send(client->socket, &msg, 4 + msg.payload_len, 0);
+    build_message(&msg1, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
+    send(client->socket, &msg1, 4 + msg1.payload_len, 0);
 
     printf("Verified client: %s:%d\n",
            inet_ntoa(client->addr.sin_addr),
            ntohs(client->addr.sin_port));
 
     while (1) {
-        int n = recv(client->socket, &msg, sizeof(msg), 0);
+        TrvMessage clientmsg;
+        int n = recv(client->socket, &clientmsg, sizeof(clientmsg), 0);
         if (n <= 0) break;
 
-        if (msg.type == TRV_KEEPALIVE) {
+        if (clientmsg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
 
             printf("Received KEEPALIVE from %s:%d\n",
             inet_ntoa(client->addr.sin_addr),
             ntohs(client->addr.sin_port));
-        } else if (msg.type == TRV_ANSWER) {
-            int qid = msg.question_id;
-            int ans = atoi(msg.payload);
+        } else if (clientmsg.type == TRV_ANSWER) {
+            int qid = clientmsg.question_id;
+            int ans = atoi(clientmsg.payload);
             if (qid >= 0 && qid < 6 && ans == questions[qid].correct_index + 1) {
                 client->score++;
                 printf("Correct answer from client %s:%d\n",
@@ -158,7 +161,7 @@ void start_game() {
     mcast_addr.sin_addr.s_addr = inet_addr(MULTICAST_IP);
     mcast_addr.sin_port = htons(MULTICAST_PORT);
 
-    TrvMessage msg;
+    TrvMessage question;
 
     for (int i = 0; i < 6; i++) {
         char q_text[512];
@@ -174,8 +177,8 @@ void start_game() {
         setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
 
         
-        build_message(&msg, TRV_QUESTION, i, q_text);
-        sendto(sockfd, &msg, 4 + msg.payload_len, 0,
+        build_message(&question, TRV_QUESTION, i, q_text);
+        sendto(sockfd, &question, 4 + question.payload_len, 0,
                (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
         printf("Sent question %d. Waiting for answers...\n", i + 1);
@@ -183,6 +186,8 @@ void start_game() {
     }
 
     // Calculate winner
+    TrvMessage winner;
+
     int max_score = -1, winner_index = -1;
     for (int i = 0; i < client_count; i++) {
         if (clients[i].verified && clients[i].score > max_score) {
@@ -198,11 +203,11 @@ void start_game() {
                  inet_ntoa(clients[winner_index].addr.sin_addr),
                  ntohs(clients[winner_index].addr.sin_port),
                  max_score);
-        build_message(&msg, TRV_WINNER, 0, winner_msg);
+        build_message(&winner, TRV_WINNER, 0, winner_msg);
 
         for (int i = 0; i < client_count; i++) {
             if (clients[i].verified) {
-                send(clients[i].socket, &msg, 4 + msg.payload_len, 0);
+                send(clients[i].socket, &winner, 4 + winner.payload_len, 0);
                 close(clients[i].socket);
             }
         }
