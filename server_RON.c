@@ -91,14 +91,13 @@ int main() {
 void* handle_client(void* arg) {
     Client* client = (Client*)arg;
     TrvMessage msg1;
-    // send code
+
     client->auth_code = rand() % 9000 + 1000;
     char code_str[32];
     snprintf(code_str, sizeof(code_str), "%d", client->auth_code);
     build_message(&msg1, TRV_AUTH_CODE, 0, code_str);
     send(client->socket, &msg1, 4 + msg1.payload_len, 0);
 
-    // receive code from client
     TrvMessage msg2;
     recv(client->socket, &msg2, sizeof(msg2), 0);
     msg2.payload[msg2.payload_len] = '\0';
@@ -125,10 +124,9 @@ void* handle_client(void* arg) {
 
         if (clientmsg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
-
             printf("Received KEEPALIVE from %s:%d\n",
-            inet_ntoa(client->addr.sin_addr),
-            ntohs(client->addr.sin_port));
+                   inet_ntoa(client->addr.sin_addr),
+                   ntohs(client->addr.sin_port));
         } else if (clientmsg.type == TRV_ANSWER) {
             int qid = clientmsg.question_id;
             int ans = atoi(clientmsg.payload);
@@ -155,6 +153,11 @@ void* game_lobby_timer(void* arg) {
 
 void start_game() {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    struct in_addr localInterface;
+    localInterface.s_addr = inet_addr("192.168.6.1");
+    setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
+
     struct sockaddr_in mcast_addr;
     memset(&mcast_addr, 0, sizeof(mcast_addr));
     mcast_addr.sin_family = AF_INET;
@@ -172,48 +175,16 @@ void start_game() {
                  questions[i].options[2],
                  questions[i].options[3]);
 
-        struct in_addr localInterface;
-        localInterface.s_addr = inet_addr("192.168.6.1");  // כתובת השרת מול ה־R1
-        setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
-
-        
         build_message(&question, TRV_QUESTION, i, q_text);
-        sendto(sockfd, &question, 4 + question.payload_len, 0,
-               (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
+        int res = sendto(sockfd, &question, 4 + question.payload_len, 0,
+                         (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
+        if (res < 0) perror("sendto failed");
 
         printf("Sent question %d. Waiting for answers...\n", i + 1);
         sleep(ANSWER_TIMEOUT);
     }
 
-    // Calculate winner
-    TrvMessage winner;
-
-    int max_score = -1, winner_index = -1;
-    for (int i = 0; i < client_count; i++) {
-        if (clients[i].verified && clients[i].score > max_score) {
-            max_score = clients[i].score;
-            winner_index = i;
-        }
-    }
-
-    if (winner_index != -1) {
-        char winner_msg[256];
-        snprintf(winner_msg, sizeof(winner_msg),
-                 "Winner: %s:%d with score %d!",
-                 inet_ntoa(clients[winner_index].addr.sin_addr),
-                 ntohs(clients[winner_index].addr.sin_port),
-                 max_score);
-        build_message(&winner, TRV_WINNER, 0, winner_msg);
-
-        for (int i = 0; i < client_count; i++) {
-            if (clients[i].verified) {
-                send(clients[i].socket, &winner, 4 + winner.payload_len, 0);
-                close(clients[i].socket);
-            }
-        }
-    }
     close(sockfd);
-    printf("Game ended.\n");
 }
 
 void* keepalive_checker(void* arg) {
