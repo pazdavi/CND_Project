@@ -15,7 +15,7 @@
 #define SERVER_IP "192.168.6.1"
 #define SERVER_PORT 8888
 #define MULTICAST_IP "239.0.0.1"
-#define MULTICAST_PORT 9999
+#define MULTICAST_PORT 12345
 
 int tcp_sock;
 struct sockaddr_in server_addr;
