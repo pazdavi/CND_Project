@@ -136,11 +136,11 @@ void* udp_listener_thread(void* arg) {
             char buffer[1024];
             fgets(buffer, sizeof(buffer), stdin);
             buffer[strcspn(buffer, "\n")] = '\0';
-            build_message(&answer, TRV_ANSWER, answer.question_id, buffer);
+            build_message(&answer, TRV_ANSWER, question.question_id, buffer);
             send(tcp_sock, &answer, 4 + answer.payload_len, 0);
         } else if (ret == 0) {
             printf("\n⏰ Time expired. No answer sent.\n");
-            build_message(&answer, TRV_ANSWER, answer.question_id, "0");
+            build_message(&answer, TRV_ANSWER, question.question_id, "0");
             send(tcp_sock, &answer, 4 + answer.payload_len, 0);
         } else {
             perror("select failed");
