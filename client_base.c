@@ -108,6 +108,7 @@ void* udp_listener_thread(void* arg) {
 
    while (1) {
     // get question
+    TrvMessage msg;
     recvfrom(udp_sock, &msg, sizeof(msg), 0, NULL, NULL);
     msg.payload[msg.payload_len] = '\0';
     printf("\n📨 Question received:\n%s\n", msg.payload);
