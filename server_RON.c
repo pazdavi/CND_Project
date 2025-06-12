@@ -96,7 +96,7 @@ void* handle_client(void* arg) {
     char code_str[32];
     snprintf(code_str, sizeof(code_str), "%d", client->auth_code);
     build_message(&msg1, TRV_AUTH_CODE, 0, code_str);
-    send(client->socket, &msg1, 4 + msg.payload_len, 0);
+    send(client->socket, &msg1, 4 + msg1.payload_len, 0);
 
     // receive code from client
     TrvMessage msg2;
