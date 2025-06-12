@@ -9,8 +9,9 @@
 #include <sys/types.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include "protocol.h"
 
-#define SERVER_IP "127.0.0.1"
+#define SERVER_IP "192.168.6.1"
 #define SERVER_PORT 8888
 #define MULTICAST_IP "239.0.0.1"
 #define MULTICAST_PORT 9999
@@ -49,21 +50,23 @@ int main() {
     }
 
     // Receive verification code from server
-    memset(buffer, 0, sizeof(buffer));
-    recv(tcp_sock, buffer, sizeof(buffer), 0);
-    printf("Server: %s", buffer);
-
+   recv(tcp_sock, &msg, sizeof(msg), 0);
+    msg.payload[msg.payload_len] = '\0';
+    printf("Server: %s\n", msg.payload);
+    
     // User inputs the code
     printf("Enter code: ");
     fgets(buffer, sizeof(buffer), stdin);
-    send(tcp_sock, buffer, strlen(buffer), 0);
+    buffer[strcspn(buffer, "\n")] = '\0';
+    build_message(&msg, TRV_AUTH_REPLY, 0, buffer);
+    send(tcp_sock, &msg, 4 + msg.payload_len, 0);
 
     // Receive verification result
-    memset(buffer, 0, sizeof(buffer));
-    recv(tcp_sock, buffer, sizeof(buffer), 0);
-    printf("Server: %s", buffer);
+     recv(tcp_sock, &msg, sizeof(msg), 0);
+    msg.payload[msg.payload_len] = '\0';
+    printf("Server: %s\n", msg.payload);
 
-    if (strncmp(buffer, "Authentication successful", 25) != 0) {
+      if (msg.type != TRV_AUTH_OK) {
         printf("Exiting.\n");
         close(tcp_sock);
         return 1;
@@ -102,16 +105,18 @@ void* udp_listener_thread(void* arg) {
     setsockopt(udp_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
    while (1) {
-    memset(buffer, 0, sizeof(buffer));
-    recvfrom(udp_sock, buffer, sizeof(buffer), 0, NULL, NULL);
-
-    printf("\n📨 Question received:\n%s\n", buffer);
+    // get question
+    recvfrom(udp_sock, &msg, sizeof(msg), 0, NULL, NULL);
+    msg.payload[msg.payload_len] = '\0';
+    printf("\n📨 Question received:\n%s\n", msg.payload);
 
     // Send ACK to server via TCP
-    send(tcp_sock, "ACK\n", 4, 0);
+    build_message(&msg, TRV_ACK, 0, "");
+    send(tcp_sock, &msg, 4 + msg.payload_len, 0);
 
-    printf("Your answer (A/B/C/D), 30 sec timeout: ");
+    printf("Your answer (1/2/3/4), 30 sec timeout: ");
     fflush(stdout);
+
 
     // Set up select() on stdin with 30 sec timeout
     fd_set readfds;
@@ -121,27 +126,33 @@ void* udp_listener_thread(void* arg) {
     timeout.tv_sec = 30;
     timeout.tv_usec = 0;
 
-    int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
-    if (ret > 0) {
-        fgets(buffer, sizeof(buffer), stdin);
-        send(tcp_sock, buffer, strlen(buffer), 0);
-    } else if (ret == 0) {
-        printf("\n⏰ Time expired. No answer sent.\n");
-        send(tcp_sock, "NOANSWER\n", 9, 0);  // optional
-    } else {
-        perror("select failed");
+  int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
+        if (ret > 0) {
+            char buffer[1024];
+            fgets(buffer, sizeof(buffer), stdin);
+            buffer[strcspn(buffer, "\n")] = '\0';
+            build_message(&msg, TRV_ANSWER, msg.question_id, buffer);
+            send(tcp_sock, &msg, 4 + msg.payload_len, 0);
+        } else if (ret == 0) {
+            printf("\n⏰ Time expired. No answer sent.\n");
+            build_message(&msg, TRV_ANSWER, msg.question_id, "0");
+            send(tcp_sock, &msg, 4 + msg.payload_len, 0);
+        } else {
+            perror("select failed");
+        }
     }
-}
-
 
     return NULL;
 }
 
 // Thread that sends TCP keep-alive messages every 10 seconds
+
 void* keep_alive_thread(void* arg) {
+    TrvMessage msg;
     while (1) {
         sleep(10);
-        send(tcp_sock, "KEEP\n", 5, 0);
+        build_message(&msg, TRV_KEEPALIVE, 0, "");
+        send(tcp_sock, &msg, 4 + msg.payload_len, 0);
     }
     return NULL;
 }
