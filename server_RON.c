@@ -10,9 +10,9 @@
 #include <sys/select.h>
 #include "protocol.h"
 
-#define PORT 8888
+#define PORT 8889
 #define MAX_CLIENTS 10
-#define GAME_LOBBY_TIME 120
+#define GAME_LOBBY_TIME 30
 #define MULTICAST_IP "239.0.0.1"
 #define MULTICAST_PORT 12345
 #define ANSWER_TIMEOUT 30
@@ -45,6 +45,17 @@ void* game_lobby_timer(void* arg);
 void* keepalive_checker(void* arg);
 void start_game();
 
+// Helper
+int recv_full(int sock, void* buf, int len) {
+    int received = 0;
+    while (received < len) {
+        int n = recv(sock, (char*)buf + received, len - received, 0);
+        if (n <= 0) return n;
+        received += n;
+    }
+    return received;
+}
+
 int main() {
     srand(time(NULL));
     int server_fd;
@@ -71,6 +82,9 @@ int main() {
 
         if (game_started || client_count >= MAX_CLIENTS) {
             printf("Rejected: game started or max clients.\n");
+            TrvMessage reject_msg;
+            build_message(&reject_msg, TRV_AUTH_FAIL, 0, "Game already started or lobby full.");
+            send(client_sock, &reject_msg, 4 + reject_msg.payload_len, 0);
             close(client_sock);
             continue;
         }
@@ -90,46 +104,62 @@ int main() {
 
 void* handle_client(void* arg) {
     Client* client = (Client*)arg;
-    TrvMessage msg1;
+    TrvMessage msg;
 
     client->auth_code = rand() % 9000 + 1000;
     char code_str[32];
     snprintf(code_str, sizeof(code_str), "%d", client->auth_code);
-    build_message(&msg1, TRV_AUTH_CODE, 0, code_str);
-    send(client->socket, &msg1, 4 + msg1.payload_len, 0);
+    build_message(&msg, TRV_AUTH_CODE, 0, code_str);
+    send(client->socket, &msg, 4 + msg.payload_len, 0);
 
-    TrvMessage msg2;
-    recv(client->socket, &msg2, sizeof(msg2), 0);
-    msg2.payload[msg2.payload_len] = '\0';
+    // Receive auth reply
+    int n = recv_full(client->socket, &msg, 4);
+    if (n <= 0) {
+        close(client->socket);
+        pthread_exit(NULL);
+    }
+    if (msg.payload_len > 0) {
+        n = recv_full(client->socket, msg.payload, msg.payload_len);
+        if (n <= 0) {
+            close(client->socket);
+            pthread_exit(NULL);
+        }
+    }
+    msg.payload[msg.payload_len] = '\0';
 
-    if (msg2.type != TRV_AUTH_REPLY || atoi(msg2.payload) != client->auth_code) {
-        build_message(&msg1, TRV_AUTH_FAIL, 0, "Invalid code.");
-        send(client->socket, &msg1, 4 + msg1.payload_len, 0);
+    if (msg.type != TRV_AUTH_REPLY || atoi(msg.payload) != client->auth_code) {
+        build_message(&msg, TRV_AUTH_FAIL, 0, "Invalid code.");
+        send(client->socket, &msg, 4 + msg.payload_len, 0);
         close(client->socket);
         pthread_exit(NULL);
     }
 
     client->verified = 1;
-    build_message(&msg1, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
-    send(client->socket, &msg1, 4 + msg1.payload_len, 0);
+    build_message(&msg, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
+    send(client->socket, &msg, 4 + msg.payload_len, 0);
 
     printf("Verified client: %s:%d\n",
            inet_ntoa(client->addr.sin_addr),
            ntohs(client->addr.sin_port));
 
     while (1) {
-        TrvMessage clientmsg;
-        int n = recv(client->socket, &clientmsg, sizeof(clientmsg), 0);
+        n = recv_full(client->socket, &msg, 4);
         if (n <= 0) break;
+        if (msg.payload_len > 0) {
+            n = recv_full(client->socket, msg.payload, msg.payload_len);
+            if (n <= 0) break;
+        }
+        msg.payload[msg.payload_len] = '\0';
 
-        if (clientmsg.type == TRV_KEEPALIVE) {
+        if (msg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
             printf("Received KEEPALIVE from %s:%d\n",
                    inet_ntoa(client->addr.sin_addr),
                    ntohs(client->addr.sin_port));
-        } else if (clientmsg.type == TRV_ANSWER) {
-            int qid = clientmsg.question_id;
-            int ans = atoi(clientmsg.payload);
+        } else if (msg.type == TRV_ANSWER) {
+            int qid = msg.question_id;
+            int ans = atoi(msg.payload);
+            printf("Received answer %d for question %d\n", ans, qid);
             if (qid >= 0 && qid < 6 && ans == questions[qid].correct_index + 1) {
                 client->score++;
                 printf("Correct answer from client %s:%d\n",
@@ -155,7 +185,7 @@ void start_game() {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
     struct in_addr localInterface;
-    localInterface.s_addr = inet_addr("192.168.6.1");
+    localInterface.s_addr = inet_addr("192.3.1.1");
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
 
     struct sockaddr_in mcast_addr;
