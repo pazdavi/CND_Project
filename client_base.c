@@ -99,6 +99,9 @@ void* udp_listener_thread(void* arg) {
     mcast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind to multicast port
+    int reuse = 1;
+   setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
+
     bind(udp_sock, (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
     // Join multicast group
