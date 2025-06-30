@@ -12,8 +12,8 @@
 #include <sys/socket.h>
 #include "protocol.h"
 
-#define SERVER_IP "192.168.6.1"
-#define SERVER_PORT 8888
+#define SERVER_IP "192.3.2.1"
+#define SERVER_PORT 8889
 #define MULTICAST_IP "239.0.0.1"
 #define MULTICAST_PORT 12345
 
@@ -23,6 +23,17 @@ struct sockaddr_in server_addr;
 // Thread function declarations
 void* udp_listener_thread(void* arg);
 void* keep_alive_thread(void* arg);
+
+// Helper to read exactly 'length' bytes from TCP socket
+int recv_full(int sock, void* buf, int length) {
+    int received = 0;
+    while (received < length) {
+        int n = recv(sock, (char*)buf + received, length - received, 0);
+        if (n <= 0) return n;
+        received += n;
+    }
+    return received;
+}
 
 int main() {
     char buffer[1024];
@@ -52,23 +63,62 @@ int main() {
 
     // Receive verification code from server
     TrvMessage msg;
-    recv(tcp_sock, &msg, sizeof(msg), 0);
+
+    // Read header
+    int n = recv_full(tcp_sock, &msg, 4);
+    if (n <= 0) {
+        printf("Server closed connection unexpectedly.\n");
+        close(tcp_sock);
+        return 1;
+    }
+    // Read payload
+    if (msg.payload_len > 0) {
+        n = recv_full(tcp_sock, msg.payload, msg.payload_len);
+        if (n <= 0) {
+            printf("Server closed connection during payload.\n");
+            close(tcp_sock);
+            return 1;
+        }
+    }
     msg.payload[msg.payload_len] = '\0';
     printf("Server: %s\n", msg.payload);
-    
+
+    if (msg.type == TRV_AUTH_FAIL) {
+        printf("Server rejected connection: %s\n", msg.payload);
+        close(tcp_sock);
+        return 1;
+    }
+
     // User inputs the code
     printf("Enter code: ");
+    // Flush stdin
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
     fgets(buffer, sizeof(buffer), stdin);
     buffer[strcspn(buffer, "\n")] = '\0';
+
     build_message(&msg, TRV_AUTH_REPLY, 0, buffer);
     send(tcp_sock, &msg, 4 + msg.payload_len, 0);
 
     // Receive verification result
-     recv(tcp_sock, &msg, sizeof(msg), 0);
+    n = recv_full(tcp_sock, &msg, 4);
+    if (n <= 0) {
+        printf("Server closed connection during verification.\n");
+        close(tcp_sock);
+        return 1;
+    }
+    if (msg.payload_len > 0) {
+        n = recv_full(tcp_sock, msg.payload, msg.payload_len);
+        if (n <= 0) {
+            printf("Server closed connection during payload.\n");
+            close(tcp_sock);
+            return 1;
+        }
+    }
     msg.payload[msg.payload_len] = '\0';
     printf("Server: %s\n", msg.payload);
 
-      if (msg.type != TRV_AUTH_OK) {
+    if (msg.type != TRV_AUTH_OK) {
         printf("Exiting.\n");
         close(tcp_sock);
         return 1;
@@ -98,10 +148,11 @@ void* udp_listener_thread(void* arg) {
     mcast_addr.sin_port = htons(MULTICAST_PORT);
     mcast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    // Bind to multicast port
+    // Enable reuse
     int reuse = 1;
-   setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
+    setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
 
+    // Bind to multicast port
     bind(udp_sock, (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
     // Join multicast group
@@ -109,34 +160,32 @@ void* udp_listener_thread(void* arg) {
     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     setsockopt(udp_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
-   while (1) {
-    // get question
-    TrvMessage question;
-    recvfrom(udp_sock, &question, sizeof(question), 0, NULL, NULL);
-    question.payload[question.payload_len] = '\0';
-    printf("\n📨 Question received:\n%s\n", question.payload);
+    while (1) {
+        // get question
+        TrvMessage question;
+        recvfrom(udp_sock, &question, sizeof(question), 0, NULL, NULL);
+        question.payload[question.payload_len] = '\0';
+        printf("\n📨 Question received:\n%s\n", question.payload);
 
-    // Send ACK to server via TCP
-    TrvMessage mACK;
-    build_message(&mACK, TRV_ACK, 0, "");
-    send(tcp_sock, &mACK, 4 + mACK.payload_len, 0);
+        // Send ACK to server via TCP
+        TrvMessage mACK;
+        build_message(&mACK, TRV_ACK, 0, "");
+        send(tcp_sock, &mACK, 4 + mACK.payload_len, 0);
 
-    printf("Your answer (1/2/3/4), 30 sec timeout: ");
-    fflush(stdout);
+        printf("Your answer (1/2/3/4), 30 sec timeout: ");
+        fflush(stdout);
 
+        // Set up select() on stdin with 30 sec timeout
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        struct timeval timeout;
+        timeout.tv_sec = 30;
+        timeout.tv_usec = 0;
 
-    // Set up select() on stdin with 30 sec timeout
-    fd_set readfds;
-    FD_ZERO(&readfds);
-    FD_SET(STDIN_FILENO, &readfds);
-    struct timeval timeout;
-    timeout.tv_sec = 30;
-    timeout.tv_usec = 0;
-    
-    TrvMessage answer;
-  int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
+        TrvMessage answer;
+        int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
         if (ret > 0) {
-            char buffer[1024];
             fgets(buffer, sizeof(buffer), stdin);
             buffer[strcspn(buffer, "\n")] = '\0';
             build_message(&answer, TRV_ANSWER, question.question_id, buffer);
@@ -154,7 +203,6 @@ void* udp_listener_thread(void* arg) {
 }
 
 // Thread that sends TCP keep-alive messages every 10 seconds
-
 void* keep_alive_thread(void* arg) {
     TrvMessage ka;
     while (1) {
