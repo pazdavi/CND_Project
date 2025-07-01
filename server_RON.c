@@ -13,10 +13,10 @@
 #define PORT 8889
 #define MAX_CLIENTS 10
 #define GAME_LOBBY_TIME 30
-#define MULTICAST_IP "239.0.0.1"
+#define MULTICAST_IP "224.1.1.1"
 #define MULTICAST_PORT 12345
 #define ANSWER_TIMEOUT 30
-#define KEEPALIVE_TIMEOUT 10
+#define KEEPALIVE_TIMEOUT 10.2
 
 typedef struct {
     int socket;
@@ -63,6 +63,10 @@ int main() {
     pthread_t lobby_thread, keep_thread;
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	// reuse port
+	int reuse = 1;
+	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));	
+	
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
@@ -182,20 +186,35 @@ void* game_lobby_timer(void* arg) {
 }
 
 void start_game() {
+    // Open UDP socket
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
+    // Specify the interface to send multicast from
     struct in_addr localInterface;
+    // Use the correct server IP (the interface to R1)
     localInterface.s_addr = inet_addr("192.3.1.1");
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
 
+    // Set TTL > 1 to allow routing across routers
+    unsigned char ttl = 10;
+    setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+
+    // Multicast destination address
     struct sockaddr_in mcast_addr;
     memset(&mcast_addr, 0, sizeof(mcast_addr));
     mcast_addr.sin_family = AF_INET;
     mcast_addr.sin_addr.s_addr = inet_addr(MULTICAST_IP);
     mcast_addr.sin_port = htons(MULTICAST_PORT);
 
-    TrvMessage question;
+    // Warmup ARP (sends 1-byte packet)
+    char dummy_data[1] = {0};
+    int warmup_res = sendto(sockfd, dummy_data, sizeof(dummy_data), 0,
+                            (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
+    if (warmup_res < 0) perror("warmup sendto failed");
+    usleep(100 * 1000); // 100ms delay
 
+    // Send questions
+    TrvMessage question;
     for (int i = 0; i < 6; i++) {
         char q_text[512];
         snprintf(q_text, sizeof(q_text), "%s\n1. %s\n2. %s\n3. %s\n4. %s",
@@ -206,6 +225,7 @@ void start_game() {
                  questions[i].options[3]);
 
         build_message(&question, TRV_QUESTION, i, q_text);
+
         int res = sendto(sockfd, &question, 4 + question.payload_len, 0,
                          (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
         if (res < 0) perror("sendto failed");
@@ -216,6 +236,7 @@ void start_game() {
 
     close(sockfd);
 }
+
 
 void* keepalive_checker(void* arg) {
     while (1) {
