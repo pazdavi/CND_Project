@@ -7,7 +7,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
-#include <sys/select.h>
 #include "protocol.h"
 
 #define PORT 8889
@@ -16,7 +15,7 @@
 #define MULTICAST_IP "224.1.1.1"
 #define MULTICAST_PORT 12345
 #define ANSWER_TIMEOUT 30
-#define KEEPALIVE_TIMEOUT 10.2
+#define KEEPALIVE_TIMEOUT 10
 
 typedef struct {
     int socket;
@@ -64,7 +63,7 @@ int main() {
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int reuse = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -84,7 +83,6 @@ int main() {
         int client_sock = accept(server_fd, (struct sockaddr*)&client_addr, &len);
 
         if (game_started || client_count >= MAX_CLIENTS) {
-            printf("Rejected: game started or max clients.\n");
             TrvMessage reject_msg;
             build_message(&reject_msg, TRV_AUTH_FAIL, 0, "Game already started or lobby full.");
             send(client_sock, &reject_msg, 4 + reject_msg.payload_len, 0);
@@ -158,6 +156,9 @@ void* handle_client(void* arg) {
 
         if (msg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
+            printf("📶 KEEPALIVE received from %s (%s)\n",
+                   client->nickname,
+                   inet_ntoa(client->addr.sin_addr));
         } else if (msg.type == TRV_ANSWER) {
             int qid = msg.question_id;
             int ans = atoi(msg.payload);
@@ -173,6 +174,7 @@ void* handle_client(void* arg) {
             }
         }
     }
+
     close(client->socket);
     pthread_exit(NULL);
 }
@@ -189,7 +191,7 @@ void* game_lobby_timer(void* arg) {
 void start_game() {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     struct in_addr localInterface;
-    localInterface.s_addr = inet_addr("192.3.1.1");
+    localInterface.s_addr = inet_addr("192.3.1.1");  // Change this if needed
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
     unsigned char ttl = 10;
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
