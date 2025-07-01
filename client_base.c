@@ -12,9 +12,9 @@
 #include <sys/socket.h>
 #include "protocol.h"
 
-#define SERVER_IP "192.3.2.1"
+#define SERVER_IP "192.3.1.1"
 #define SERVER_PORT 8889
-#define MULTICAST_IP "239.0.0.1"
+#define MULTICAST_IP "224.1.1.1"
 #define MULTICAST_PORT 12345
 
 int tcp_sock;
@@ -92,10 +92,13 @@ int main() {
     // User inputs the code
     printf("Enter code: ");
     // Flush stdin
+    fgets(buffer, sizeof(buffer), stdin);
+	if (strchr(buffer, '\n') == NULL) {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
-    fgets(buffer, sizeof(buffer), stdin);
-    buffer[strcspn(buffer, "\n")] = '\0';
+	}
+	
+	buffer[strcspn(buffer, "\n")] = '\0';
 
     build_message(&msg, TRV_AUTH_REPLY, 0, buffer);
     send(tcp_sock, &msg, 4 + msg.payload_len, 0);
@@ -166,12 +169,14 @@ void* udp_listener_thread(void* arg) {
         recvfrom(udp_sock, &question, sizeof(question), 0, NULL, NULL);
         question.payload[question.payload_len] = '\0';
         printf("\n📨 Question received:\n%s\n", question.payload);
-
+		fflush(stdout);	
+		
         // Send ACK to server via TCP
         TrvMessage mACK;
         build_message(&mACK, TRV_ACK, 0, "");
         send(tcp_sock, &mACK, 4 + mACK.payload_len, 0);
-
+		
+		// Prompt for answer
         printf("Your answer (1/2/3/4), 30 sec timeout: ");
         fflush(stdout);
 
