@@ -145,7 +145,7 @@ void* handle_client(void* arg) {
     build_message(&msg, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
     send(client->socket, &msg, 4 + msg.payload_len, 0);
 
-    printf("✅ %s connected and verified.\n", client->nickname);
+    printf("\u2705 %s connected and verified.\n", client->nickname);
 
     while (1) {
         n = recv_full(client->socket, &msg, 4);
@@ -158,7 +158,7 @@ void* handle_client(void* arg) {
 
         if (msg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
-            printf("🔄 KEEPALIVE received from %s (%s)\n",
+            printf("\U0001F501 KEEPALIVE received from %s (%s)\n",
                    client->nickname, inet_ntoa(client->addr.sin_addr));
         } else if (msg.type == TRV_ANSWER) {
             int qid = msg.question_id;
@@ -166,10 +166,10 @@ void* handle_client(void* arg) {
             if (qid >= 0 && qid < 6) {
                 if (ans == questions[qid].correct_index + 1) {
                     client->score++;
-                    printf("✅ %s answered question %d correctly. Score: %d\n",
+                    printf("\u2705 %s answered question %d correctly. Score: %d\n",
                            client->nickname, qid + 1, client->score);
                 } else {
-                    printf("❌ %s answered question %d incorrectly.\n",
+                    printf("\u274C %s answered question %d incorrectly.\n",
                            client->nickname, qid + 1);
                 }
             }
@@ -206,8 +206,7 @@ void start_game() {
     sendto(sockfd, dummy_data, sizeof(dummy_data), 0,
            (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
-    // ✅ הוספת השהיה לפני שליחת שאלה 1
-    printf("⌛ Waiting 2 seconds before sending questions...\n");
+    printf("\u231B Waiting 2 seconds before sending questions...\n");
     sleep(2);
 
     TrvMessage question;
@@ -226,7 +225,7 @@ void start_game() {
                          (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
         if (res < 0) perror("sendto failed");
 
-        printf("📨 Sent question %d. Waiting for answers...\n", i + 1);
+        printf("\U0001F4E8 Sent question %d. Waiting for answers...\n", i + 1);
         sleep(ANSWER_TIMEOUT);
     }
 
@@ -239,7 +238,7 @@ void* keepalive_checker(void* arg) {
         time_t now = time(NULL);
         for (int i = 0; i < client_count; i++) {
             if (clients[i].verified && difftime(now, clients[i].last_keepalive) > KEEPALIVE_TIMEOUT) {
-                printf("⚠️  %s timed out.\n", clients[i].nickname);
+                printf("\u26A0\uFE0F  %s timed out.\n", clients[i].nickname);
                 close(clients[i].socket);
                 clients[i].verified = 0;
             }
