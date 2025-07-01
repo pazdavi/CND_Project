@@ -49,6 +49,12 @@ int main() {
         return 0;
     }
 
+    // Prompt for nickname
+    char nickname[64];
+    printf("Enter your nickname: ");
+    fgets(nickname, sizeof(nickname), stdin);
+    nickname[strcspn(nickname, "\n")] = '\0';
+
     // Create TCP connection to server
     tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
     server_addr.sin_family = AF_INET;
@@ -91,16 +97,18 @@ int main() {
 
     // User inputs the code
     printf("Enter code: ");
-    // Flush stdin
     fgets(buffer, sizeof(buffer), stdin);
-	if (strchr(buffer, '\n') == NULL) {
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF);
-	}
-	
-	buffer[strcspn(buffer, "\n")] = '\0';
+    if (strchr(buffer, '\n') == NULL) {
+        int c;
+        while ((c = getchar()) != '\n' && c != EOF);
+    }
+    buffer[strcspn(buffer, "\n")] = '\0';
 
-    build_message(&msg, TRV_AUTH_REPLY, 0, buffer);
+    // Combine code and nickname into one string with '|'
+    char combined[128];
+    snprintf(combined, sizeof(combined), "%s|%s", buffer, nickname);
+
+    build_message(&msg, TRV_AUTH_REPLY, 0, combined);
     send(tcp_sock, &msg, 4 + msg.payload_len, 0);
 
     // Receive verification result
@@ -138,49 +146,39 @@ int main() {
     return 0;
 }
 
-// Thread that listens to multicast UDP questions
 void* udp_listener_thread(void* arg) {
     int udp_sock;
     struct sockaddr_in mcast_addr;
     struct ip_mreq mreq;
     char buffer[1024];
 
-    // Create UDP socket
     udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
     mcast_addr.sin_family = AF_INET;
     mcast_addr.sin_port = htons(MULTICAST_PORT);
     mcast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    // Enable reuse
     int reuse = 1;
     setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
-
-    // Bind to multicast port
     bind(udp_sock, (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
-    // Join multicast group
     mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_IP);
     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     setsockopt(udp_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
     while (1) {
-        // get question
         TrvMessage question;
         recvfrom(udp_sock, &question, sizeof(question), 0, NULL, NULL);
         question.payload[question.payload_len] = '\0';
         printf("\n📨 Question received:\n%s\n", question.payload);
-		fflush(stdout);	
-		
-        // Send ACK to server via TCP
+        fflush(stdout);
+
         TrvMessage mACK;
         build_message(&mACK, TRV_ACK, 0, "");
         send(tcp_sock, &mACK, 4 + mACK.payload_len, 0);
-		
-		// Prompt for answer
+
         printf("Your answer (1/2/3/4), 30 sec timeout: ");
         fflush(stdout);
 
-        // Set up select() on stdin with 30 sec timeout
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
@@ -203,11 +201,9 @@ void* udp_listener_thread(void* arg) {
             perror("select failed");
         }
     }
-
     return NULL;
 }
 
-// Thread that sends TCP keep-alive messages every 10 seconds
 void* keep_alive_thread(void* arg) {
     TrvMessage ka;
     while (1) {
