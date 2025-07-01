@@ -25,6 +25,7 @@ typedef struct {
     int score;
     int auth_code;
     time_t last_keepalive;
+    char nickname[32];
 } Client;
 
 Client clients[MAX_CLIENTS];
@@ -45,7 +46,6 @@ void* game_lobby_timer(void* arg);
 void* keepalive_checker(void* arg);
 void start_game();
 
-// Helper
 int recv_full(int sock, void* buf, int len) {
     int received = 0;
     while (received < len) {
@@ -63,10 +63,9 @@ int main() {
     pthread_t lobby_thread, keep_thread;
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
-	// reuse port
-	int reuse = 1;
-	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));	
-	
+    int reuse = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
+
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
@@ -98,6 +97,7 @@ int main() {
         clients[client_count].verified = 0;
         clients[client_count].score = 0;
         clients[client_count].last_keepalive = time(NULL);
+        strcpy(clients[client_count].nickname, "(unknown)");
 
         pthread_t tid;
         pthread_create(&tid, NULL, handle_client, &clients[client_count]);
@@ -116,7 +116,6 @@ void* handle_client(void* arg) {
     build_message(&msg, TRV_AUTH_CODE, 0, code_str);
     send(client->socket, &msg, 4 + msg.payload_len, 0);
 
-    // Receive auth reply
     int n = recv_full(client->socket, &msg, 4);
     if (n <= 0) {
         close(client->socket);
@@ -131,20 +130,22 @@ void* handle_client(void* arg) {
     }
     msg.payload[msg.payload_len] = '\0';
 
-    if (msg.type != TRV_AUTH_REPLY || atoi(msg.payload) != client->auth_code) {
-        build_message(&msg, TRV_AUTH_FAIL, 0, "Invalid code.");
+    char* token = strtok(msg.payload, "|");
+    char* nickname = strtok(NULL, "|");
+    if (!token || !nickname || atoi(token) != client->auth_code) {
+        build_message(&msg, TRV_AUTH_FAIL, 0, "Invalid code or nickname.");
         send(client->socket, &msg, 4 + msg.payload_len, 0);
         close(client->socket);
         pthread_exit(NULL);
     }
 
     client->verified = 1;
+    strncpy(client->nickname, nickname, sizeof(client->nickname));
+    client->nickname[sizeof(client->nickname) - 1] = '\0';
     build_message(&msg, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
     send(client->socket, &msg, 4 + msg.payload_len, 0);
 
-    printf("Verified client: %s:%d\n",
-           inet_ntoa(client->addr.sin_addr),
-           ntohs(client->addr.sin_port));
+    printf("✅ %s connected and verified.\n", client->nickname);
 
     while (1) {
         n = recv_full(client->socket, &msg, 4);
@@ -157,18 +158,18 @@ void* handle_client(void* arg) {
 
         if (msg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
-            printf("Received KEEPALIVE from %s:%d\n",
-                   inet_ntoa(client->addr.sin_addr),
-                   ntohs(client->addr.sin_port));
         } else if (msg.type == TRV_ANSWER) {
             int qid = msg.question_id;
             int ans = atoi(msg.payload);
-            printf("Received answer %d for question %d\n", ans, qid);
-            if (qid >= 0 && qid < 6 && ans == questions[qid].correct_index + 1) {
-                client->score++;
-                printf("Correct answer from client %s:%d\n",
-                       inet_ntoa(client->addr.sin_addr),
-                       ntohs(client->addr.sin_port));
+            if (qid >= 0 && qid < 6) {
+                if (ans == questions[qid].correct_index + 1) {
+                    client->score++;
+                    printf("✅ %s answered question %d correctly. Score: %d\n",
+                           client->nickname, qid + 1, client->score);
+                } else {
+                    printf("❌ %s answered question %d incorrectly.\n",
+                           client->nickname, qid + 1);
+                }
             }
         }
     }
@@ -186,38 +187,29 @@ void* game_lobby_timer(void* arg) {
 }
 
 void start_game() {
-    // Open UDP socket
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-
-    // Specify the interface to send multicast from
     struct in_addr localInterface;
-    // Use the correct server IP (the interface to R1)
     localInterface.s_addr = inet_addr("192.3.1.1");
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
-
-    // Set TTL > 1 to allow routing across routers
     unsigned char ttl = 10;
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
 
-    // Multicast destination address
     struct sockaddr_in mcast_addr;
     memset(&mcast_addr, 0, sizeof(mcast_addr));
     mcast_addr.sin_family = AF_INET;
     mcast_addr.sin_addr.s_addr = inet_addr(MULTICAST_IP);
     mcast_addr.sin_port = htons(MULTICAST_PORT);
 
-    // Warmup ARP (sends 1-byte packet)
     char dummy_data[1] = {0};
-    int warmup_res = sendto(sockfd, dummy_data, sizeof(dummy_data), 0,
-                            (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
-    if (warmup_res < 0) perror("warmup sendto failed");
-    usleep(100 * 1000); // 100ms delay
+    sendto(sockfd, dummy_data, sizeof(dummy_data), 0,
+           (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
+    usleep(100 * 1000);
 
-    // Send questions
     TrvMessage question;
     for (int i = 0; i < 6; i++) {
         char q_text[512];
-        snprintf(q_text, sizeof(q_text), "%s\n1. %s\n2. %s\n3. %s\n4. %s",
+        snprintf(q_text, sizeof(q_text), "Question #%d:\n%s\n1. %s\n2. %s\n3. %s\n4. %s",
+                 i + 1,
                  questions[i].question,
                  questions[i].options[0],
                  questions[i].options[1],
@@ -225,18 +217,16 @@ void start_game() {
                  questions[i].options[3]);
 
         build_message(&question, TRV_QUESTION, i, q_text);
-
         int res = sendto(sockfd, &question, 4 + question.payload_len, 0,
                          (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
         if (res < 0) perror("sendto failed");
 
-        printf("Sent question %d. Waiting for answers...\n", i + 1);
+        printf("📨 Sent question %d. Waiting for answers...\n", i + 1);
         sleep(ANSWER_TIMEOUT);
     }
 
     close(sockfd);
 }
-
 
 void* keepalive_checker(void* arg) {
     while (1) {
@@ -244,9 +234,7 @@ void* keepalive_checker(void* arg) {
         time_t now = time(NULL);
         for (int i = 0; i < client_count; i++) {
             if (clients[i].verified && difftime(now, clients[i].last_keepalive) > KEEPALIVE_TIMEOUT) {
-                printf("Client %s:%d timed out.\n",
-                       inet_ntoa(clients[i].addr.sin_addr),
-                       ntohs(clients[i].addr.sin_port));
+                printf("⚠️  %s timed out.\n", clients[i].nickname);
                 close(clients[i].socket);
                 clients[i].verified = 0;
             }
