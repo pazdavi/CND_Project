@@ -45,6 +45,7 @@ void* handle_client(void* arg);
 void* game_lobby_timer(void* arg);
 void* keepalive_checker(void* arg);
 void start_game();
+void announce_winner_and_close();
 
 int recv_full(int sock, void* buf, int len) {
     int received = 0;
@@ -84,7 +85,6 @@ int main() {
         int client_sock = accept(server_fd, (struct sockaddr*)&client_addr, &len);
 
         if (game_started || client_count >= MAX_CLIENTS) {
-            printf("Rejected: game started or max clients.\n");
             TrvMessage reject_msg;
             build_message(&reject_msg, TRV_AUTH_FAIL, 0, "Game already started or lobby full.");
             send(client_sock, &reject_msg, 4 + reject_msg.payload_len, 0);
@@ -230,6 +230,59 @@ void start_game() {
     }
 
     close(sockfd);
+    announce_winner_and_close();
+}
+
+void announce_winner_and_close() {
+    int highest = -1;
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i].verified && clients[i].score > highest) {
+            highest = clients[i].score;
+        }
+    }
+
+    char message[1024];
+    strcpy(message, "\n\n=== Final Scores ===\n");
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i].verified) {
+            char line[128];
+            snprintf(line, sizeof(line), "%s: %d\n", clients[i].nickname, clients[i].score);
+            strcat(message, line);
+        }
+    }
+
+    strcat(message, "\n");
+    int winners = 0;
+    char winner_name[32];
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i].verified && clients[i].score == highest) {
+            winners++;
+            strcpy(winner_name, clients[i].nickname);
+        }
+    }
+
+    if (winners == 0) {
+        strcat(message, "No one answered any questions correctly.\n");
+    } else if (winners == 1) {
+        strcat(message, "\n🏆 Winner: ");
+        strcat(message, winner_name);
+        strcat(message, "!\n");
+    } else {
+        strcat(message, "\n⚔️ It's a tie between multiple players!\n");
+    }
+
+    TrvMessage winmsg;
+    build_message(&winmsg, TRV_WINNER, 0, message);
+
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i].verified) {
+            send(clients[i].socket, &winmsg, 4 + winmsg.payload_len, 0);
+            close(clients[i].socket);
+        }
+    }
+
+    printf("\nGame over. Shutting down server.\n");
+    exit(0);
 }
 
 void* keepalive_checker(void* arg) {
