@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+// #define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +46,7 @@ void* game_lobby_timer(void* arg);
 void* keepalive_checker(void* arg);
 void start_game();
 void announce_winner_and_close();
+void send_multicast_message(TrvMessage* msg);
 
 int recv_full(int sock, void* buf, int len) {
     int received = 0;
@@ -65,7 +66,7 @@ int main() {
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int reuse = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -96,7 +97,6 @@ int main() {
         clients[client_count].addr = client_addr;
         clients[client_count].verified = 0;
         clients[client_count].score = 0;
-        clients[client_count].last_keepalive = time(NULL);
         strcpy(clients[client_count].nickname, "(unknown)");
 
         pthread_t tid;
@@ -142,6 +142,8 @@ void* handle_client(void* arg) {
     client->verified = 1;
     strncpy(client->nickname, nickname, sizeof(client->nickname));
     client->nickname[sizeof(client->nickname) - 1] = '\0';
+    client->last_keepalive = time(NULL);
+
     build_message(&msg, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
     send(client->socket, &msg, 4 + msg.payload_len, 0);
 
@@ -175,6 +177,7 @@ void* handle_client(void* arg) {
             }
         }
     }
+
     close(client->socket);
     pthread_exit(NULL);
 }
@@ -192,7 +195,7 @@ void start_game() {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     struct in_addr localInterface;
     localInterface.s_addr = inet_addr("192.3.1.1");
-    setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, &localInterface, sizeof(localInterface));
+    setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
     unsigned char ttl = 10;
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
 
@@ -206,7 +209,7 @@ void start_game() {
     sendto(sockfd, dummy_data, sizeof(dummy_data), 0,
            (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
-    printf("⏳ Waiting 2 seconds before sending questions...\n");
+    printf("⌛ Waiting 2 seconds before sending questions...\n");
     sleep(2);
 
     TrvMessage question;
@@ -274,6 +277,7 @@ void announce_winner_and_close() {
     TrvMessage winmsg;
     build_message(&winmsg, TRV_WINNER, 0, message);
 
+    // Send to all clients (TCP)
     for (int i = 0; i < client_count; i++) {
         if (clients[i].verified) {
             send(clients[i].socket, &winmsg, 4 + winmsg.payload_len, 0);
@@ -281,9 +285,28 @@ void announce_winner_and_close() {
         }
     }
 
+    // Send also via multicast
+    send_multicast_message(&winmsg);
+
     printf("%s", message);
     printf("\nGame over. Shutting down server.\n");
     exit(0);
+}
+
+void send_multicast_message(TrvMessage* msg) {
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    struct in_addr localInterface;
+    localInterface.s_addr = inet_addr("192.3.1.1");
+    setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
+
+    struct sockaddr_in mcast_addr;
+    memset(&mcast_addr, 0, sizeof(mcast_addr));
+    mcast_addr.sin_family = AF_INET;
+    mcast_addr.sin_addr.s_addr = inet_addr(MULTICAST_IP);
+    mcast_addr.sin_port = htons(MULTICAST_PORT);
+
+    sendto(sockfd, msg, 4 + msg->payload_len, 0, (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
+    close(sockfd);
 }
 
 void* keepalive_checker(void* arg) {
@@ -291,7 +314,8 @@ void* keepalive_checker(void* arg) {
         sleep(5);
         time_t now = time(NULL);
         for (int i = 0; i < client_count; i++) {
-            if (clients[i].verified && difftime(now, clients[i].last_keepalive) > KEEPALIVE_TIMEOUT) {
+            if (clients[i].verified &&
+                difftime(now, clients[i].last_keepalive) > KEEPALIVE_TIMEOUT) {
                 printf("⚠️  %s timed out.\n", clients[i].nickname);
                 close(clients[i].socket);
                 clients[i].verified = 0;
