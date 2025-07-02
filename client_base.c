@@ -23,6 +23,7 @@ int auth_successful = 0;
 
 void* udp_listener_thread(void* arg);
 void* keep_alive_thread(void* arg);
+void* tcp_winner_listener_thread(void* arg);
 
 int recv_full(int sock, void* buf, int length) {
     int received = 0;
@@ -36,7 +37,7 @@ int recv_full(int sock, void* buf, int length) {
 
 int main() {
     char buffer[1024];
-    pthread_t udp_thread, keepalive_thread;
+    pthread_t udp_thread, keepalive_thread, tcp_winner_thread;
 
     printf("Do you want to join the game? (y/n): ");
     fgets(buffer, sizeof(buffer), stdin);
@@ -119,8 +120,10 @@ int main() {
     auth_successful = 1;
     pthread_create(&udp_thread, NULL, udp_listener_thread, NULL);
     pthread_create(&keepalive_thread, NULL, keep_alive_thread, NULL);
+    pthread_create(&tcp_winner_thread, NULL, tcp_winner_listener_thread, NULL);
 
     pthread_join(udp_thread, NULL);
+    pthread_join(tcp_winner_thread, NULL);
     pthread_cancel(keepalive_thread);
     close(tcp_sock);
     return 0;
@@ -182,14 +185,32 @@ void* udp_listener_thread(void* arg) {
                 build_message(&answer, TRV_ANSWER, msg.question_id, "0");
                 send(tcp_sock, &answer, 4 + answer.payload_len, 0);
             }
-        } else if (msg.type == TRV_WINNER) {
+        }
+    }
+
+    close(udp_sock);
+    return NULL;
+}
+
+void* tcp_winner_listener_thread(void* arg) {
+    TrvMessage msg;
+    while (1) {
+        int n = recv_full(tcp_sock, &msg, 4);
+        if (n <= 0) break;
+
+        if (msg.payload_len > 0) {
+            n = recv_full(tcp_sock, msg.payload, msg.payload_len);
+            if (n <= 0) break;
+        }
+
+        msg.payload[msg.payload_len] = '\0';
+
+        if (msg.type == TRV_WINNER) {
             printf("\n🎉 GAME OVER!\n%s\n", msg.payload);
             fflush(stdout);
             break;
         }
     }
-
-    close(udp_sock);
     return NULL;
 }
 
