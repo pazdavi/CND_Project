@@ -19,6 +19,7 @@
 
 int tcp_sock;
 struct sockaddr_in server_addr;
+int auth_successful = 0;
 
 void* udp_listener_thread(void* arg);
 void* keep_alive_thread(void* arg);
@@ -67,6 +68,7 @@ int main() {
         close(tcp_sock);
         return 1;
     }
+
     if (msg.payload_len > 0) {
         n = recv_full(tcp_sock, msg.payload, msg.payload_len);
         if (n <= 0) {
@@ -114,6 +116,7 @@ int main() {
         return 1;
     }
 
+    auth_successful = 1;
     pthread_create(&udp_thread, NULL, udp_listener_thread, NULL);
     pthread_create(&keepalive_thread, NULL, keep_alive_thread, NULL);
 
@@ -179,9 +182,7 @@ void* udp_listener_thread(void* arg) {
                 build_message(&answer, TRV_ANSWER, msg.question_id, "0");
                 send(tcp_sock, &answer, 4 + answer.payload_len, 0);
             }
-        }
-
-        else if (msg.type == TRV_WINNER) {
+        } else if (msg.type == TRV_WINNER) {
             printf("\n🎉 GAME OVER!\n%s\n", msg.payload);
             fflush(stdout);
             break;
@@ -196,8 +197,10 @@ void* keep_alive_thread(void* arg) {
     TrvMessage ka;
     while (1) {
         sleep(10);
-        build_message(&ka, TRV_KEEPALIVE, 0, "");
-        send(tcp_sock, &ka, 4 + ka.payload_len, 0);
+        if (auth_successful) {
+            build_message(&ka, TRV_KEEPALIVE, 0, "");
+            send(tcp_sock, &ka, 4 + ka.payload_len, 0);
+        }
     }
     return NULL;
 }
