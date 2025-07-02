@@ -65,7 +65,7 @@ int main() {
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int reuse = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -145,7 +145,7 @@ void* handle_client(void* arg) {
     build_message(&msg, TRV_AUTH_OK, 0, "Welcome to the trivia game!");
     send(client->socket, &msg, 4 + msg.payload_len, 0);
 
-    printf("\u2705 %s connected and verified.\n", client->nickname);
+    printf("✅ %s connected and verified.\n", client->nickname);
 
     while (1) {
         n = recv_full(client->socket, &msg, 4);
@@ -158,7 +158,7 @@ void* handle_client(void* arg) {
 
         if (msg.type == TRV_KEEPALIVE) {
             client->last_keepalive = time(NULL);
-            printf("\U0001F501 KEEPALIVE received from %s (%s)\n",
+            printf("🔄 KEEPALIVE received from %s (%s)\n",
                    client->nickname, inet_ntoa(client->addr.sin_addr));
         } else if (msg.type == TRV_ANSWER) {
             int qid = msg.question_id;
@@ -166,10 +166,10 @@ void* handle_client(void* arg) {
             if (qid >= 0 && qid < 6) {
                 if (ans == questions[qid].correct_index + 1) {
                     client->score++;
-                    printf("\u2705 %s answered question %d correctly. Score: %d\n",
+                    printf("✅ %s answered question %d correctly. Score: %d\n",
                            client->nickname, qid + 1, client->score);
                 } else {
-                    printf("\u274C %s answered question %d incorrectly.\n",
+                    printf("❌ %s answered question %d incorrectly.\n",
                            client->nickname, qid + 1);
                 }
             }
@@ -192,7 +192,7 @@ void start_game() {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     struct in_addr localInterface;
     localInterface.s_addr = inet_addr("192.3.1.1");
-    setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
+    setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, &localInterface, sizeof(localInterface));
     unsigned char ttl = 10;
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
 
@@ -206,7 +206,7 @@ void start_game() {
     sendto(sockfd, dummy_data, sizeof(dummy_data), 0,
            (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
-    printf("\u231B Waiting 2 seconds before sending questions...\n");
+    printf("⏳ Waiting 2 seconds before sending questions...\n");
     sleep(2);
 
     TrvMessage question;
@@ -225,7 +225,7 @@ void start_game() {
                          (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
         if (res < 0) perror("sendto failed");
 
-        printf("\U0001F4E8 Sent question %d. Waiting for answers...\n", i + 1);
+        printf("📨 Sent question %d. Waiting for answers...\n", i + 1);
         sleep(ANSWER_TIMEOUT);
     }
 
@@ -281,6 +281,7 @@ void announce_winner_and_close() {
         }
     }
 
+    printf("%s", message);
     printf("\nGame over. Shutting down server.\n");
     exit(0);
 }
@@ -291,7 +292,7 @@ void* keepalive_checker(void* arg) {
         time_t now = time(NULL);
         for (int i = 0; i < client_count; i++) {
             if (clients[i].verified && difftime(now, clients[i].last_keepalive) > KEEPALIVE_TIMEOUT) {
-                printf("\u26A0\uFE0F  %s timed out.\n", clients[i].nickname);
+                printf("⚠️  %s timed out.\n", clients[i].nickname);
                 close(clients[i].socket);
                 clients[i].verified = 0;
             }
