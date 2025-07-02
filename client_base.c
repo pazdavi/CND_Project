@@ -20,11 +20,9 @@
 int tcp_sock;
 struct sockaddr_in server_addr;
 
-// Thread declarations
 void* udp_listener_thread(void* arg);
 void* keep_alive_thread(void* arg);
 
-// Helper to read exactly 'length' bytes from TCP socket
 int recv_full(int sock, void* buf, int length) {
     int received = 0;
     while (received < length) {
@@ -39,7 +37,6 @@ int main() {
     char buffer[1024];
     pthread_t udp_thread, keepalive_thread;
 
-    // Ask user before connecting
     char choice[8];
     printf("Do you want to join the game? (y/n): ");
     fgets(choice, sizeof(choice), stdin);
@@ -48,13 +45,11 @@ int main() {
         return 0;
     }
 
-    // Prompt for nickname
     char nickname[64];
     printf("Enter your nickname: ");
     fgets(nickname, sizeof(nickname), stdin);
     nickname[strcspn(nickname, "\n")] = '\0';
 
-    // Connect to server
     tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(SERVER_PORT);
@@ -66,14 +61,13 @@ int main() {
     }
 
     TrvMessage msg;
-
-    // Receive AUTH_CODE
     int n = recv_full(tcp_sock, &msg, 4);
     if (n <= 0) {
         printf("Server closed connection unexpectedly.\n");
         close(tcp_sock);
         return 1;
     }
+
     if (msg.payload_len > 0) {
         n = recv_full(tcp_sock, msg.payload, msg.payload_len);
         if (n <= 0) {
@@ -91,7 +85,6 @@ int main() {
         return 1;
     }
 
-    // Enter code
     printf("Enter code: ");
     fgets(buffer, sizeof(buffer), stdin);
     if (strchr(buffer, '\n') == NULL) {
@@ -105,7 +98,6 @@ int main() {
     build_message(&msg, TRV_AUTH_REPLY, 0, combined);
     send(tcp_sock, &msg, 4 + msg.payload_len, 0);
 
-    // Receive AUTH_OK
     n = recv_full(tcp_sock, &msg, 4);
     if (n <= 0) {
         printf("Server closed connection during verification.\n");
@@ -138,7 +130,6 @@ int main() {
     return 0;
 }
 
-// Listen for multicast questions
 void* udp_listener_thread(void* arg) {
     int udp_sock;
     struct sockaddr_in mcast_addr;
@@ -159,12 +150,14 @@ void* udp_listener_thread(void* arg) {
     setsockopt(udp_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
     while (1) {
-        TrvMessage question;
-        recvfrom(udp_sock, &question, sizeof(question), 0, NULL, NULL);
-        question.payload[question.payload_len] = '\0';
+        TrvMessage msg;
+        int n = recvfrom(udp_sock, &msg, sizeof(msg), 0, NULL, NULL);
+        if (n <= 0) continue;
 
-        if (question.type == TRV_QUESTION) {
-            printf("\n📨 Question received:\n%s\n", question.payload);
+        msg.payload[msg.payload_len] = '\0';
+
+        if (msg.type == TRV_QUESTION) {
+            printf("\n📨 Question received:\n%s\n", msg.payload);
             fflush(stdout);
 
             TrvMessage mACK;
@@ -186,22 +179,27 @@ void* udp_listener_thread(void* arg) {
             if (ret > 0) {
                 fgets(buffer, sizeof(buffer), stdin);
                 buffer[strcspn(buffer, "\n")] = '\0';
-                build_message(&answer, TRV_ANSWER, question.question_id, buffer);
+                build_message(&answer, TRV_ANSWER, msg.question_id, buffer);
                 send(tcp_sock, &answer, 4 + answer.payload_len, 0);
             } else if (ret == 0) {
                 printf("\n⏰ Time expired. No answer sent.\n");
-                build_message(&answer, TRV_ANSWER, question.question_id, "0");
+                build_message(&answer, TRV_ANSWER, msg.question_id, "0");
                 send(tcp_sock, &answer, 4 + answer.payload_len, 0);
             } else {
                 perror("select failed");
             }
         }
+
+        else if (msg.type == TRV_WINNER) {
+            printf("\n🎉 GAME OVER: %s\n", msg.payload);
+            break;
+        }
     }
 
+    close(udp_sock);
     return NULL;
 }
 
-// Keep-alive sender every 10s
 void* keep_alive_thread(void* arg) {
     TrvMessage ka;
     while (1) {
