@@ -37,10 +37,9 @@ int main() {
     char buffer[1024];
     pthread_t udp_thread, keepalive_thread;
 
-    char choice[8];
     printf("Do you want to join the game? (y/n): ");
-    fgets(choice, sizeof(choice), stdin);
-    if (choice[0] != 'y' && choice[0] != 'Y') {
+    fgets(buffer, sizeof(buffer), stdin);
+    if (buffer[0] != 'y' && buffer[0] != 'Y') {
         printf("Canceled. Exiting.\n");
         return 0;
     }
@@ -55,6 +54,7 @@ int main() {
     server_addr.sin_port = htons(SERVER_PORT);
     inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
     memset(&(server_addr.sin_zero), 0, 8);
+
     if (connect(tcp_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("TCP connection failed");
         return 1;
@@ -67,7 +67,6 @@ int main() {
         close(tcp_sock);
         return 1;
     }
-
     if (msg.payload_len > 0) {
         n = recv_full(tcp_sock, msg.payload, msg.payload_len);
         if (n <= 0) {
@@ -80,17 +79,12 @@ int main() {
     printf("Server: %s\n", msg.payload);
 
     if (msg.type == TRV_AUTH_FAIL) {
-        printf("Server rejected connection: %s\n", msg.payload);
         close(tcp_sock);
         return 1;
     }
 
     printf("Enter code: ");
     fgets(buffer, sizeof(buffer), stdin);
-    if (strchr(buffer, '\n') == NULL) {
-        int c;
-        while ((c = getchar()) != '\n' && c != EOF);
-    }
     buffer[strcspn(buffer, "\n")] = '\0';
 
     char combined[128];
@@ -116,7 +110,6 @@ int main() {
     printf("Server: %s\n", msg.payload);
 
     if (msg.type != TRV_AUTH_OK) {
-        printf("Exiting.\n");
         close(tcp_sock);
         return 1;
     }
@@ -142,7 +135,7 @@ void* udp_listener_thread(void* arg) {
     mcast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     int reuse = 1;
-    setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
+    setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
     bind(udp_sock, (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
 
     mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_IP);
@@ -181,17 +174,16 @@ void* udp_listener_thread(void* arg) {
                 buffer[strcspn(buffer, "\n")] = '\0';
                 build_message(&answer, TRV_ANSWER, msg.question_id, buffer);
                 send(tcp_sock, &answer, 4 + answer.payload_len, 0);
-            } else if (ret == 0) {
+            } else {
                 printf("\n⏰ Time expired. No answer sent.\n");
                 build_message(&answer, TRV_ANSWER, msg.question_id, "0");
                 send(tcp_sock, &answer, 4 + answer.payload_len, 0);
-            } else {
-                perror("select failed");
             }
         }
 
         else if (msg.type == TRV_WINNER) {
-            printf("\n🎉 GAME OVER: %s\n", msg.payload);
+            printf("\n🎉 GAME OVER!\n%s\n", msg.payload);
+            fflush(stdout);
             break;
         }
     }
