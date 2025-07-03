@@ -33,13 +33,15 @@ int client_count = 0;
 int game_started = 0;
 
 TriviaQuestion questions[6] = {
-    {"Capital of France?", {"Berlin", "Madrid", "Paris", "Rome"}, 2},
-    {"Red Planet?", {"Earth", "Mars", "Jupiter", "Saturn"}, 1},
-    {"5 * 6?", {"11", "30", "56", "20"}, 1},
-    {"Project language?", {"Python", "C", "Java", "Rust"}, 1},
-    {"Mona Lisa?", {"Da Vinci", "Van Gogh", "Picasso", "Rembrandt"}, 0},
-    {"Largest ocean?", {"Atlantic", "Indian", "Pacific", "Arctic"}, 2}
+    {"Which course is the best in CSE?", {"Computer Networks Design", "Intro to Electrical Engineering", "Data Structures", "Sadna Akademit"}, 0},
+    {"What is Paz's Dog's name?", {"Chili", "Nala", "Lucy", "Mitzi"}, 0},
+    {"Who is Ron Zimerman's favorite singer?", {"Shiri Maimon", "Mergui", "Noa Kirel", "Anna Zak"}, 2},
+    {"In an M/M/1 queue, what does the “1” represent?", {"One arrival process", "One service channel (server)",
+														 "One customer in the system", "One time unit per service"}, 1},
+    {"Which cat is hairless?", {"Maine Coon", "Bengal", "Siamese", "Sphynx"}, 3},
+    {"When is Efi Korenfeld's birthday?", {"September 29th", "April 14th", "July 22nd", "May 14th"}, 1}
 };
+
 
 void* handle_client(void* arg);
 void* game_lobby_timer(void* arg);
@@ -116,6 +118,7 @@ void* handle_client(void* arg) {
     build_message(&msg, TRV_AUTH_CODE, 0, code_str);
     send(client->socket, &msg, 4 + msg.payload_len, 0);
 
+	// receive token and nickname from client
     int n = recv_full(client->socket, &msg, 4);
     if (n <= 0) {
         close(client->socket);
@@ -130,6 +133,15 @@ void* handle_client(void* arg) {
     }
     msg.payload[msg.payload_len] = '\0';
 
+	// check again after receiving code - if game already started (disconnect client)
+	 if (game_started) {
+        build_message(&msg, TRV_AUTH_FAIL, 0, "Game already started.");
+        send(client->socket, &msg, 4 + msg.payload_len, 0);
+        close(client->socket);
+        pthread_exit(NULL);
+    }
+	
+	// check token and nickname
     char* token = strtok(msg.payload, "|");
     char* nickname = strtok(NULL, "|");
     if (!token || !nickname || atoi(token) != client->auth_code) {
