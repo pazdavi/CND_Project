@@ -17,6 +17,12 @@
 #define MULTICAST_IP "224.1.1.1"
 #define MULTICAST_PORT 12345
 
+// function to clear buffer when not answering questions 
+void clear_stdin() {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF) {}
+}
+
 int tcp_sock;
 struct sockaddr_in server_addr;
 int auth_successful = 0;
@@ -165,6 +171,9 @@ void* udp_listener_thread(void* arg) {
 
             printf("Your answer (1/2/3/4), 30 sec timeout: ");
             fflush(stdout);
+			
+			// clear input buffer before answer
+			//clear_stdin();
 
             fd_set readfds;
             FD_ZERO(&readfds);
@@ -179,6 +188,9 @@ void* udp_listener_thread(void* arg) {
                 fgets(buffer, sizeof(buffer), stdin);
                 buffer[strcspn(buffer, "\n")] = '\0';
                 build_message(&answer, TRV_ANSWER, msg.question_id, buffer);
+				
+				//clear_stdin();
+				
                 send(tcp_sock, &answer, 4 + answer.payload_len, 0);
             } else {
                 printf("\n⏰ Time expired. No answer sent.\n");
