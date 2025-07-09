@@ -10,6 +10,7 @@
 #include <sys/select.h>
 #include "protocol.h"
 
+// ---- Constants for server and game configuration ----
 #define PORT 8889
 #define MAX_CLIENTS 10
 #define GAME_LOBBY_TIME 30
@@ -18,31 +19,32 @@
 #define ANSWER_TIMEOUT 30
 #define KEEPALIVE_TIMEOUT 10.2
 
+// ---- Client information structure ----
 typedef struct {
-    int socket;
-    struct sockaddr_in addr;
-    int verified;
-    int score;
-    int auth_code;
-    time_t last_keepalive;
-    char nickname[32];
+    int socket;                     // TCP socket for communication with client
+    struct sockaddr_in addr;        // Client address
+    int verified;                   // 1 if authenticated, 0 otherwise
+    int score;                      // Trivia score
+    int auth_code;                  // Auth code to verify client
+    time_t last_keepalive;          // Last keepalive timestamp
+    char nickname[32];              // Player's nickname
 } Client;
 
-Client clients[MAX_CLIENTS];
-int client_count = 0;
-int game_started = 0;
+Client clients[MAX_CLIENTS];        // Array of connected clients
+int client_count = 0;               // Current number of clients
+int game_started = 0;               // 1 if game has started, 0 if still in lobby
 
+// ---- Sample trivia questions ----
 TriviaQuestion questions[6] = {
     {"Which course is the best in CSE?", {"Computer Networks Design", "Intro to Electrical Engineering", "Data Structures", "Sadna Akademit"}, 0},
     {"What is Paz's Dog's name?", {"Chili", "Nala", "Lucy", "Mitzi"}, 0},
     {"Who is Ron Zimerman's favorite singer?", {"Shiri Maimon", "Mergui", "Noa Kirel", "Anna Zak"}, 2},
-    {"In an M/M/1 queue, what does the “1” represent?", {"One arrival process", "One service channel (server)",
-														 "One customer in the system", "One time unit per service"}, 1},
+    {"In an M/M/1 queue, what does the “1” represent?", {"One arrival process", "One service channel (server)", "One customer in the system", "One time unit per service"}, 1},
     {"Which cat is hairless?", {"Maine Coon", "Bengal", "Siamese", "Sphynx"}, 3},
     {"When is Efi Korenfeld's birthday?", {"September 29th", "April 14th", "July 22nd", "May 14th"}, 1}
 };
 
-
+// ---- Function declarations ----
 void* handle_client(void* arg);
 void* game_lobby_timer(void* arg);
 void* keepalive_checker(void* arg);
@@ -50,6 +52,7 @@ void start_game();
 void announce_winner_and_close();
 void send_multicast_message(TrvMessage* msg);
 
+// ---- Helper: Receive exactly len bytes from a socket ----
 int recv_full(int sock, void* buf, int len) {
     int received = 0;
     while (received < len) {
@@ -60,12 +63,14 @@ int recv_full(int sock, void* buf, int len) {
     return received;
 }
 
+// ---- Main server function ----
 int main() {
-    srand(time(NULL));
+    srand(time(NULL));  // Initialize random seed (for auth codes)
     int server_fd;
     struct sockaddr_in server_addr;
     pthread_t lobby_thread, keep_thread;
 
+    // --- Create and set up the TCP server socket ---
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int reuse = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
@@ -79,14 +84,18 @@ int main() {
     listen(server_fd, 5);
 
     printf("Server running on port %d. Waiting for clients...\n", PORT);
+
+    // --- Start lobby and keepalive threads ---
     pthread_create(&lobby_thread, NULL, game_lobby_timer, NULL);
     pthread_create(&keep_thread, NULL, keepalive_checker, NULL);
 
+    // --- Accept client connections while lobby is open ---
     while (1) {
         struct sockaddr_in client_addr;
         socklen_t len = sizeof(client_addr);
         int client_sock = accept(server_fd, (struct sockaddr*)&client_addr, &len);
 
+        // If game started or lobby full, reject new clients
         if (game_started || client_count >= MAX_CLIENTS) {
             TrvMessage reject_msg;
             build_message(&reject_msg, TRV_AUTH_FAIL, 0, "Game already started or lobby full.");
@@ -95,12 +104,14 @@ int main() {
             continue;
         }
 
+        // Initialize client struct
         clients[client_count].socket = client_sock;
         clients[client_count].addr = client_addr;
         clients[client_count].verified = 0;
         clients[client_count].score = 0;
         strcpy(clients[client_count].nickname, "(unknown)");
 
+        // Create a thread to handle the client
         pthread_t tid;
         pthread_create(&tid, NULL, handle_client, &clients[client_count]);
         client_count++;
@@ -108,17 +119,19 @@ int main() {
     return 0;
 }
 
+// ---- Per-client thread: handle authentication and answers ----
 void* handle_client(void* arg) {
     Client* client = (Client*)arg;
     TrvMessage msg;
 
-    client->auth_code = rand() % 9000 + 1000;
+    // --- Send random authentication code to client ---
+    client->auth_code = rand() % 9000 + 1000;  // Random 4-digit code
     char code_str[32];
     snprintf(code_str, sizeof(code_str), "%d", client->auth_code);
     build_message(&msg, TRV_AUTH_CODE, 0, code_str);
     send(client->socket, &msg, 4 + msg.payload_len, 0);
 
-	// receive token and nickname from client
+    // --- Receive authentication reply (code|nickname) from client ---
     int n = recv_full(client->socket, &msg, 4);
     if (n <= 0) {
         close(client->socket);
@@ -133,15 +146,15 @@ void* handle_client(void* arg) {
     }
     msg.payload[msg.payload_len] = '\0';
 
-	// check again after receiving code - if game already started (disconnect client)
-	 if (game_started) {
+    // --- Check if game started during authentication ---
+    if (game_started) {
         build_message(&msg, TRV_AUTH_FAIL, 0, "Game already started.");
         send(client->socket, &msg, 4 + msg.payload_len, 0);
         close(client->socket);
         pthread_exit(NULL);
     }
-	
-	// check token and nickname
+
+    // --- Verify token and nickname ---
     char* token = strtok(msg.payload, "|");
     char* nickname = strtok(NULL, "|");
     if (!token || !nickname || atoi(token) != client->auth_code) {
@@ -161,6 +174,7 @@ void* handle_client(void* arg) {
 
     printf("✅ %s connected and verified.\n", client->nickname);
 
+    // --- Main per-client message loop: keepalive & answer handling ---
     while (1) {
         n = recv_full(client->socket, &msg, 4);
         if (n <= 0) break;
@@ -194,6 +208,7 @@ void* handle_client(void* arg) {
     pthread_exit(NULL);
 }
 
+// ---- Thread: handles lobby timer, then starts the game ----
 void* game_lobby_timer(void* arg) {
     printf("Lobby open for %d seconds...\n", GAME_LOBBY_TIME);
     sleep(GAME_LOBBY_TIME);
@@ -203,10 +218,12 @@ void* game_lobby_timer(void* arg) {
     return NULL;
 }
 
+// ---- Main function to multicast questions and collect answers ----
 void start_game() {
+    // --- Prepare UDP socket for multicast ---
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     struct in_addr localInterface;
-    localInterface.s_addr = inet_addr("192.3.1.1");
+    localInterface.s_addr = inet_addr("192.3.1.1"); // Interface for multicast
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_IF, (char *)&localInterface, sizeof(localInterface));
     unsigned char ttl = 10;
     setsockopt(sockfd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
@@ -217,6 +234,7 @@ void start_game() {
     mcast_addr.sin_addr.s_addr = inet_addr(MULTICAST_IP);
     mcast_addr.sin_port = htons(MULTICAST_PORT);
 
+    // Send dummy data to help clients join group early
     char dummy_data[1] = {0};
     sendto(sockfd, dummy_data, sizeof(dummy_data), 0,
            (struct sockaddr*)&mcast_addr, sizeof(mcast_addr));
@@ -224,6 +242,7 @@ void start_game() {
     printf("⌛ Waiting 2 seconds before sending questions...\n");
     sleep(2);
 
+    // --- Send each question as a multicast UDP packet ---
     TrvMessage question;
     for (int i = 0; i < 6; i++) {
         char q_text[512];
@@ -241,13 +260,14 @@ void start_game() {
         if (res < 0) perror("sendto failed");
 
         printf("📨 Sent question %d. Waiting for answers...\n", i + 1);
-        sleep(ANSWER_TIMEOUT);
+        sleep(ANSWER_TIMEOUT); // Wait before next question
     }
 
     close(sockfd);
     announce_winner_and_close();
 }
 
+// ---- Announce winner to all clients and close server ----
 void announce_winner_and_close() {
     int highest = -1;
     for (int i = 0; i < client_count; i++) {
@@ -297,7 +317,7 @@ void announce_winner_and_close() {
         }
     }
 
-    // Send also via multicast
+    // Also announce result via multicast
     send_multicast_message(&winmsg);
 
     printf("%s", message);
@@ -305,6 +325,7 @@ void announce_winner_and_close() {
     exit(0);
 }
 
+// ---- Helper: send a message via UDP multicast ----
 void send_multicast_message(TrvMessage* msg) {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     struct in_addr localInterface;
@@ -321,9 +342,10 @@ void send_multicast_message(TrvMessage* msg) {
     close(sockfd);
 }
 
+// ---- Thread: checks client keepalives, removes dead clients ----
 void* keepalive_checker(void* arg) {
     while (1) {
-        sleep(5);
+        sleep(5); // Check every 5 seconds
         time_t now = time(NULL);
         for (int i = 0; i < client_count; i++) {
             if (clients[i].verified &&
